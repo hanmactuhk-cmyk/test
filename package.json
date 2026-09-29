@@ -1,0 +1,10 @@
+{
+  "name":"flow-studio-automation",
+  "version":"0.2.0",
+  "private":true,
+  "main":"main.js",
+  "scripts":{"start":"electron .","build":"electron-builder --win"},
+  "dependencies":{"playwright":"^1.55.0","xlsx":"^0.18.5"},
+  "devDependencies":{"electron":"^38.2.0","electron-builder":"^26.0.12"},
+  "build":{"appId":"com.flowstudio.automation","productName":"Flow Studio Automation","directories":{"output":"release"},"files":["main.js","preload.js","automation/**/*","renderer/**/*","package.json"],"win":{"target":["nsis","portable"]},"nsis":{"oneClick":false,"allowToChangeInstallationDirectory":true}}
+}
