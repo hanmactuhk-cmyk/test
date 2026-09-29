@@ -1,0 +1,56 @@
+name: Build Flow Studio Automation
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+      - master
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+
+      - name: Check JavaScript
+        shell: pwsh
+        run: |
+          node --check main.js
+          node --check preload.js
+          node --check automation/flow-engine.js
+          node --check automation/profile-manager.js
+          node --check renderer/app.js
+
+      - name: Build Windows EXE
+        run: npm run build
+
+      - name: List build output
+        shell: pwsh
+        run: |
+          Write-Host "=== Release ==="
+          if (Test-Path release) {
+            Get-ChildItem release -Recurse |
+              Select-Object FullName, Length
+          } else {
+            Write-Error "Không tìm thấy thư mục release"
+          }
+
+      - name: Upload Windows EXE
+        uses: actions/upload-artifact@v4
+        with:
+          name: Flow-Studio-Automation-Windows
+          path: release/*.exe
+          if-no-files-found: error
+          retention-days: 14
