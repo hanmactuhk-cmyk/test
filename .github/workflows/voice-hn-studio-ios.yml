@@ -1,0 +1,125 @@
+name: Voice Hn Studio - build unsigned iPhone IPA
+on:
+  push:
+    branches:
+      - voice-hn-studio
+    paths:
+      - 'voice-hn-studio/**'
+      - '.github/workflows/voice-hn-studio-ios.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  ios:
+    runs-on: macos-15
+    timeout-minutes: 120
+    steps:
+      - name: Checkout public Voice Hn Studio source
+        uses: actions/checkout@v4
+
+      - name: Extract native iOS app source
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import io,lzma,tarfile
+          data=lzma.decompress(Path('voice-hn-studio/v1/source.tar.xz').read_bytes())
+          dst=Path('ios');dst.mkdir()
+          with tarfile.open(fileobj=io.BytesIO(data),mode='r:') as tar:
+              for item in tar.getmembers():
+                  if item.name.startswith('/') or '..' in Path(item.name).parts:
+                      raise ValueError("Unsafe path in source archive")
+              tar.extractall(dst,filter='data')
+          print("Swift files",len(list(dst.rglob('*.swift'))))
+          PY
+
+      - name: Install iOS build tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          brew install xcodegen cocoapods
+          if ! command -v rustup >/dev/null 2>&1; then
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+          fi
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+
+      - name: Prepare offline speech and voice-cloning resources
+        shell: bash
+        working-directory: ios
+        run: |
+          set -euo pipefail
+          export PATH="$HOME/.cargo/bin:$PATH"
+          bash scripts/setup_mac.sh
+          source .venv/bin/activate
+          python -m pip install "onnx>=1.18,<1.21" "pillow>=10,<12"
+          python scripts/patch_runtime.py
+          python - <<'PY'
+          from PIL import Image
+          from pathlib import Path
+          from io import BytesIO
+          source=Path('../voice-hn-studio/v1/brand.webp')
+          image=Image.open(BytesIO(source.read_bytes())).convert('RGB')
+          dest=Path('HNVieNeuIOS/Support/Assets.xcassets')
+          image.resize((1024,1024),Image.Resampling.LANCZOS).save(dest/'AppIcon.appiconset/Icon-1024.png',optimize=True)
+          image.resize((256,256),Image.Resampling.LANCZOS).save(dest/'BrandMark.imageset/mark.png',optimize=True)
+          print('App icon and brand identity prepared')
+          PY
+
+      - name: Compile iOS app (arm64, unsigned)
+        working-directory: ios
+        shell: bash
+        run: |
+          set -euo pipefail
+          xcodebuild -workspace HNVieNeuIOS.xcworkspace \
+            -scheme HNVieNeuIOS -configuration Release -sdk iphoneos \
+            -destination 'generic/platform=iOS' -derivedDataPath DerivedData \
+            CODE_SIGNING_ALLOWED=NO build
+
+      - name: Check binary and all bundled offline assets
+        shell: bash
+        working-directory: ios
+        run: |
+          set -euo pipefail
+          APP="DerivedData/Build/Products/Release-iphoneos/HNVieNeuIOS.app"
+          test -f "$APP/HNVieNeuIOS"
+          test -f "$APP/Assets.car"
+          test -f "$APP/Info.plist"
+          for name in text_encoder duration_predictor vector_estimator codec_decoder speaker_encoder codec_encoder reference_encoder; do
+            test -s "$APP/Models/$name.onnx"
+          done
+          test -s "$APP/Data/sea_g2p.bin"
+          mkdir -p dist/Payload
+          ditto "$APP" dist/Payload/HNVieNeuIOS.app
+          (cd dist && zip -qr -y "Voice-Hn-Studio-UNSIGNED.ipa" Payload)
+          unzip -t dist/Voice-Hn-Studio-UNSIGNED.ipa >/dev/null
+          du -h dist/Voice-Hn-Studio-UNSIGNED.ipa
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Voice-Hn-Studio-UNSIGNED
+          path: ios/dist/Voice-Hn-Studio-UNSIGNED.ipa
+          retention-days: 30
+          if-no-files-found: error
+
+      - name: Publish public IPA for Safari download
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG="voice-hn-studio-v1"
+          IPA="ios/dist/Voice-Hn-Studio-UNSIGNED.ipa"
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$TAG" "$IPA" --repo "$GITHUB_REPOSITORY" --clobber
+          else
+            gh release create "$TAG" "$IPA" \
+              --repo "$GITHUB_REPOSITORY" \
+              --target "$GITHUB_SHA" \
+              --title "Voice Hn Studio v1 - Offline Voice & Clone" \
+              --notes "Unsigned iOS IPA. Vietnamese offline voices and user-authorized voice cloning. The app bundles all ONNX graphs. Sign using your own app before installing. Voice-clone sound quality has not yet been verified on a physical iPhone." \
+              --latest=false
+          fi
