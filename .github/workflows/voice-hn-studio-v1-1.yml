@@ -2,7 +2,7 @@ name: Voice Hn Studio - build unsigned iPhone IPA
 on:
   push:
     branches:
-      - voice-hn-studio-v1-1-1
+      - voice-hn-studio-v1-1
     paths:
       - 'voice-hn-studio/**'
       - '.github/workflows/voice-hn-studio-v1-1.yml'
