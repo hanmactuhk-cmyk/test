@@ -1,0 +1,125 @@
+name: HN VieNeu AI - Build unsigned iPhone IPA
+on:
+  push:
+    branches:
+      - hn-vieneu-public
+    paths:
+      - 'hn-vieneu-ios-src/**'
+      - '.github/workflows/hn-vieneu-ios-unsigned.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 120
+    steps:
+      - name: Checkout isolated source branch
+        uses: actions/checkout@v4
+
+      - name: Reconstruct checked iOS source
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import base64,hashlib,lzma,tarfile,io,pathlib
+          root=pathlib.Path('hn-vieneu-ios-src')
+          encoded=''.join((root/f'part{i}.txt').read_text().strip() for i in range(4))
+          assert len(encoded)==17280, f'Wrong encoded length {len(encoded)}'
+          digest=hashlib.sha256(encoded.encode()).hexdigest()
+          assert digest=='f080a7a3e6853b2ebe264a38d15bb10d6af545b518bdb5642609474d9ac26282',f'Wrong source checksum {digest}'
+          data=lzma.decompress(base64.b64decode(encoded))
+          dst=pathlib.Path('ios')
+          dst.mkdir()
+          with tarfile.open(fileobj=io.BytesIO(data),mode='r:') as tf:
+            assert all(not m.name.startswith('/') and '..' not in pathlib.PurePosixPath(m.name).parts for m in tf.getmembers())
+            tf.extractall(dst,filter='data')
+          print('Validated Swift sources:',len(list(dst.rglob('*.swift'))))
+          PY
+
+      - name: Install project tools and Rust
+        shell: bash
+        run: |
+          set -euo pipefail
+          brew install xcodegen cocoapods
+          if ! command -v rustup >/dev/null 2>&1; then
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+          fi
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+
+      - name: Prepare offline VieNeu Nano models and Rust pronunciation engine
+        shell: bash
+        working-directory: ios
+        run: |
+          set -euo pipefail
+          export PATH="$HOME/.cargo/bin:$PATH"
+          bash scripts/setup_mac.sh
+
+      - name: Adapt ONNX bool masks to iOS Objective-C tensor API
+        shell: bash
+        working-directory: ios
+        run: |
+          set -euo pipefail
+          source .venv/bin/activate
+          python -m pip install 'onnx>=1.18,<1.21'
+          python ../hn-vieneu-ios-src/patch_runtime.py
+
+      - name: Build physical iPhone app without signing
+        shell: bash
+        working-directory: ios
+        run: |
+          set -euo pipefail
+          xcodebuild \
+            -workspace HNVieNeuIOS.xcworkspace \
+            -scheme HNVieNeuIOS \
+            -configuration Release \
+            -sdk iphoneos \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath DerivedData \
+            CODE_SIGNING_ALLOWED=NO \
+            build
+
+      - name: Package unsigned IPA
+        shell: bash
+        working-directory: ios
+        run: |
+          set -euo pipefail
+          APP="DerivedData/Build/Products/Release-iphoneos/HNVieNeuIOS.app"
+          test -d "$APP"
+          test -f "$APP/HNVieNeuIOS"
+          test -f "$APP/Info.plist"
+          test -f "$APP/Models/text_encoder.onnx"
+          test -f "$APP/Models/vector_estimator.onnx"
+          test -f "$APP/Data/sea_g2p.bin"
+          mkdir -p dist/Payload
+          ditto "$APP" dist/Payload/HNVieNeuIOS.app
+          cd dist
+          /usr/bin/zip -q -r -y HN-VieNeu-AI-UNSIGNED.ipa Payload
+          unzip -t HN-VieNeu-AI-UNSIGNED.ipa >/dev/null
+          ls -lh HN-VieNeu-AI-UNSIGNED.ipa
+
+      - name: Upload IPA for iPhone sideload signing
+        uses: actions/upload-artifact@v4
+        with:
+          name: HN-VieNeu-AI-UNSIGNED
+          path: ios/dist/HN-VieNeu-AI-UNSIGNED.ipa
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Publish public IPA direct-download release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG="hn-vieneu-ios-unsigned-v1"
+          IPA="ios/dist/HN-VieNeu-AI-UNSIGNED.ipa"
+          test -s "$IPA"
+          gh release create "$TAG" "$IPA" \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$GITHUB_SHA" \
+            --title "HN VieNeu AI - IPA chưa ký" \
+            --notes "HN VieNeu AI dành cho iPhone, model VieNeu-TTS Nano đóng gói offline. IPA chưa ký; cần ứng dụng ký IPA của bạn để cài đặt. Chưa kiểm thử TTS trên thiết bị thực tế." \
+            --latest=false
