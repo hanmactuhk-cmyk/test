@@ -1,0 +1,164 @@
+name: Voice Hn Studio - build unsigned iPhone IPA
+on:
+  push:
+    branches:
+      - voice-hn-studio-v1-2
+    paths:
+      - 'voice-hn-studio/**'
+      - '.github/workflows/voice-hn-studio-v1-2.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  ios:
+    runs-on: macos-15
+    timeout-minutes: 120
+    steps:
+      - name: Checkout public Voice Hn Studio source
+        uses: actions/checkout@v4
+
+      - name: Extract native iOS app source
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import io,lzma,tarfile
+          data=lzma.decompress(Path('voice-hn-studio/v1/source.tar.xz').read_bytes())
+          dst=Path('ios');dst.mkdir()
+          with tarfile.open(fileobj=io.BytesIO(data),mode='r:') as tar:
+              for item in tar.getmembers():
+                  if item.name.startswith('/') or '..' in Path(item.name).parts:
+                      raise ValueError("Unsafe path in source archive")
+              tar.extractall(dst,filter='data')
+          print("Swift files",len(list(dst.rglob('*.swift'))))
+          PY
+
+      - name: Apply preview, history deletion, and cache cleanup update
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import base64, hashlib, io, lzma, tarfile
+          base = Path('voice-hn-studio/v1.1')
+          encoded = ''.join((base / f'patch{i}.txt').read_text().strip() for i in range(4))
+          if hashlib.sha256(encoded.encode()).hexdigest() != '92f1a008f1027d72d51d0c07ab5766a5b4ef1a6f8b4533f7073b49b594323ad1':
+              raise RuntimeError('Source patch checksum mismatch')
+          blob = lzma.decompress(base64.b64decode(encoded))
+          if hashlib.sha256(base64.b64decode(encoded)).hexdigest() != 'd1edd3d60b3ef200796ed78ec88c4dbc8358aa0a9538b95593b97eaabe6fc647':
+              raise RuntimeError('Compressed patch checksum mismatch')
+          expected = {'HNVieNeuIOS/Sources/HNVieNeuApp.swift', 'HNVieNeuIOS/Sources/SpeechStudio.swift', 'HNVieNeuIOS/Sources/AudioUtils.swift'}
+          with tarfile.open(fileobj=io.BytesIO(blob), mode='r:') as tar:
+              members = tar.getmembers()
+              if set(item.name for item in members) != expected:
+                  raise RuntimeError('Unexpected files in source patch')
+              tar.extractall('ios', filter='data')
+          plist=Path('ios/HNVieNeuIOS/Support/Info.plist')
+          original=plist.read_text()
+          assert '<string>1.0.0</string>' in original
+          plist.write_text(original.replace('<string>1.0.0</string>','<string>1.1.0</string>').replace('<string>2</string>','<string>3</string>'))
+          src='\n'.join((Path('ios') / f).read_text() for f in expected)
+          assert '0965043000' in src and 'cleanTemporaryFiles' in src and 'removeAllHistory' in src
+          print('Voice Hn Studio v1.1 source files installed')
+          PY
+
+
+      - name: Fix iCloud voice-file import and show selection status
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 voice-hn-studio/v1.2/fix_import.py ios
+          grep -q 'ImportedVoiceAudio.copyIntoSandbox' ios/HNVieNeuIOS/Sources/SpeechStudio.swift
+          grep -q 'Phiên bản 1.2' ios/HNVieNeuIOS/Sources/HNVieNeuApp.swift
+          grep -q '1.2.0' ios/HNVieNeuIOS/Support/Info.plist
+
+      - name: Install iOS build tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          brew install xcodegen cocoapods
+          if ! command -v rustup >/dev/null 2>&1; then
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+          fi
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+
+      - name: Prepare offline speech and voice-cloning resources
+        shell: bash
+        working-directory: ios
+        run: |
+          set -euo pipefail
+          export PATH="$HOME/.cargo/bin:$PATH"
+          bash scripts/setup_mac.sh
+          source .venv/bin/activate
+          python -m pip install "onnx>=1.18,<1.21" "pillow>=10,<12"
+          python scripts/patch_runtime.py
+          python - <<'PY'
+          from PIL import Image
+          from pathlib import Path
+          from io import BytesIO
+          source=Path('../voice-hn-studio/v1/brand.webp')
+          image=Image.open(BytesIO(source.read_bytes())).convert('RGB')
+          dest=Path('HNVieNeuIOS/Support/Assets.xcassets')
+          image.resize((1024,1024),Image.Resampling.LANCZOS).save(dest/'AppIcon.appiconset/Icon-1024.png',optimize=True)
+          image.resize((256,256),Image.Resampling.LANCZOS).save(dest/'BrandMark.imageset/mark.png',optimize=True)
+          print('App icon and brand identity prepared')
+          PY
+
+      - name: Compile iOS app (arm64, unsigned)
+        working-directory: ios
+        shell: bash
+        run: |
+          set -euo pipefail
+          xcodebuild -workspace HNVieNeuIOS.xcworkspace \
+            -scheme HNVieNeuIOS -configuration Release -sdk iphoneos \
+            -destination 'generic/platform=iOS' -derivedDataPath DerivedData \
+            CODE_SIGNING_ALLOWED=NO build
+
+      - name: Check binary and all bundled offline assets
+        shell: bash
+        working-directory: ios
+        run: |
+          set -euo pipefail
+          APP="DerivedData/Build/Products/Release-iphoneos/HNVieNeuIOS.app"
+          test -f "$APP/HNVieNeuIOS"
+          test -f "$APP/Assets.car"
+          test -f "$APP/Info.plist"
+          for name in text_encoder duration_predictor vector_estimator codec_decoder speaker_encoder codec_encoder reference_encoder; do
+            test -s "$APP/Models/$name.onnx"
+          done
+          test -s "$APP/Data/sea_g2p.bin"
+          mkdir -p dist/Payload
+          ditto "$APP" dist/Payload/HNVieNeuIOS.app
+          (cd dist && zip -qr -y "Voice-Hn-Studio-v1.2-UNSIGNED.ipa" Payload)
+          unzip -t dist/Voice-Hn-Studio-v1.2-UNSIGNED.ipa >/dev/null
+          du -h dist/Voice-Hn-Studio-v1.2-UNSIGNED.ipa
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Voice-Hn-Studio-v1.2-UNSIGNED
+          path: ios/dist/Voice-Hn-Studio-v1.2-UNSIGNED.ipa
+          retention-days: 30
+          if-no-files-found: error
+
+      - name: Publish public IPA for Safari download
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG="voice-hn-studio-v1-2"
+          IPA="ios/dist/Voice-Hn-Studio-v1.2-UNSIGNED.ipa"
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$TAG" "$IPA" --repo "$GITHUB_REPOSITORY" --clobber
+          else
+            gh release create "$TAG" "$IPA" \
+              --repo "$GITHUB_REPOSITORY" \
+              --target "$GITHUB_SHA" \
+              --title "Voice Hn Studio v1.2 - Fix file and iCloud audio import" \
+              --notes "Voice Hn Studio v1.2 unsigned IPA. Fixes selection and loading of MP3 WAV M4A from Files and iCloud, with status and audio validation. Includes voice previews and cache cleanup. Runtime behavior still needs testing on a physical iPhone." \
+              --latest=false
+          fi
