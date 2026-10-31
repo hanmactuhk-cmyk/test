@@ -59,6 +59,29 @@ jobs:
           find Pods \( -iname '*.a' -o -name '*.framework' \) | head -60
           echo "==== ONNX C API headers ===="
           find Pods \( -name onnxruntime_c_api.h -o -name onnxruntime_cxx_api.h \)
+      - name: Compile true Turbo C++ engine for iPhone arm64
+        run: |
+          set -euo pipefail
+          ORT="$(pwd)/ios/Pods/onnxruntime-c/onnxruntime.xcframework/ios-arm64/onnxruntime.framework"
+          test -s "$ORT/onnxruntime"
+          file "$ORT/onnxruntime"
+          mkdir -p ort-ios/include ort-ios/lib
+          cp -R "$ORT/Headers/." ort-ios/include/
+          cp "$ORT/onnxruntime" ort-ios/lib/libonnxruntime.a
+          cmake -S cpp -B cpp/build-ios -G Xcode \
+            -DCMAKE_SYSTEM_NAME=iOS \
+            -DCMAKE_OSX_SYSROOT=iphoneos \
+            -DCMAKE_OSX_ARCHITECTURES=arm64 \
+            -DCMAKE_OSX_DEPLOYMENT_TARGET=16.0 \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DVIENEU_NATIVE_BACKEND=cpu \
+            -DVIENEU_PORTABLE_CPU=ON \
+            -DONNXRUNTIME_ROOT="$(pwd)/ort-ios" \
+            -DBUILD_TESTING=OFF
+          cmake --build cpp/build-ios --config Release \
+            --target vieneu-tts-core --parallel 4
+          test -s cpp/build-ios/Release/libvieneu-tts-core.a
+          file cpp/build-ios/Release/libvieneu-tts-core.a
       - name: Inspect model availability and sizes
         run: |
           python3 -m venv .probevenv
