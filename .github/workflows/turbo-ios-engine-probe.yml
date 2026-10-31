@@ -1,0 +1,63 @@
+name: Voice Hn Studio Turbo - iOS native engine feasibility
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [voice-hn-studio-turbo-ios]
+    paths:
+      - ".github/workflows/turbo-ios-engine-probe.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  turbo-probe:
+    runs-on: macos-15
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: Extract existing native iOS project
+        run: |
+          python3 - <<'PY'
+          import io,lzma,tarfile
+          from pathlib import Path
+          data=lzma.decompress(Path("voice-hn-studio/v1/source.tar.xz").read_bytes())
+          Path("ios").mkdir()
+          with tarfile.open(fileobj=io.BytesIO(data),mode="r:") as ar:
+              for entry in ar:
+                  if entry.name.startswith("/") or ".." in Path(entry.name).parts: raise ValueError(entry.name)
+              ar.extractall("ios",filter="data")
+          print("iOS project items:")
+          for p in Path("ios").iterdir(): print(str(p))
+          PY
+      - name: Fetch genuine Turbo native C++ inference engine
+        run: |
+          git clone --depth=1 --recurse-submodules --shallow-submodules https://github.com/dduongtrandai/VieNeu-TTS.cpp.git cpp
+          test -s cpp/src/vieneu/vieneu_tts.h
+          test -s cpp/CMakeLists.txt
+          test -s cpp/third_party/llama.cpp/CMakeLists.txt
+      - name: Discover iOS ONNX Runtime linkage in existing app
+        run: |
+          set -eu
+          echo "==== Podfile ===="
+          cat ios/Podfile
+          echo "==== Xcode package files ===="
+          find ios -maxdepth 4 \( -iname '*onnx*' -o -name '*.xcframework' -o -name 'project.yml' \) -print | head -70
+          echo "==== Native dependency manifest ===="
+          grep -nE 'target_link_libraries|VIENEU_V3_ONNX|add_library|find_library' cpp/CMakeLists.txt | head -45
+      - name: Inspect model availability and sizes
+        run: |
+          python3 -m pip install -q 'huggingface_hub>=0.30,<2'
+          python3 - <<'PY'
+          from huggingface_hub import HfApi
+          repo="pnnbao-ump/VieNeu-TTS-v3-Turbo"
+          files=HfApi().list_repo_tree(repo,recursive=True)
+          print("Genuine Turbo ONNX artifacts:")
+          for e in files:
+              if hasattr(e,"size") and ("/" in e.path or e.path.endswith(".onnx")):
+                  print(e.path, e.size)
+          PY
+      - name: Report
+        run: |
+          echo 'Native Turbo C++ project and iOS app structure verified.'
+          echo 'This probe DOES NOT claim an iPhone IPA or successful speech inference.'
