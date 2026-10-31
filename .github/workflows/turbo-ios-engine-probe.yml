@@ -45,10 +45,24 @@ jobs:
           find ios -maxdepth 4 \( -iname '*onnx*' -o -name '*.xcframework' -o -name 'project.yml' \) -print | head -70
           echo "==== Native dependency manifest ===="
           grep -nE 'target_link_libraries|VIENEU_V3_ONNX|add_library|find_library' cpp/CMakeLists.txt | head -45
+      - name: Install iOS toolchain and ONNX Runtime pod
+        run: |
+          set -euo pipefail
+          brew install xcodegen cocoapods
+          cd ios
+          xcodegen generate
+          pod install
+          echo "==== Native ONNX Runtime iOS libraries ===="
+          find Pods \( -iname '*onnx*' -o -name '*.xcframework' \) | head -60
+          echo "==== iOS ONNX binaries ===="
+          find Pods \( -iname '*.a' -o -name '*.framework' \) | head -60
+          echo "==== ONNX C API headers ===="
+          find Pods \( -name onnxruntime_c_api.h -o -name onnxruntime_cxx_api.h \)
       - name: Inspect model availability and sizes
         run: |
-          python3 -m pip install -q 'huggingface_hub>=0.30,<2'
-          python3 - <<'PY'
+          python3 -m venv .probevenv
+          .probevenv/bin/pip install -q 'huggingface_hub>=0.30,<2'
+          .probevenv/bin/python - <<'PY'
           from huggingface_hub import HfApi
           repo="pnnbao-ump/VieNeu-TTS-v3-Turbo"
           files=HfApi().list_repo_tree(repo,recursive=True)
