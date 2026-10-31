@@ -49,6 +49,7 @@ jobs:
         run: |
           set -euo pipefail
           brew install xcodegen cocoapods
+          mkdir -p ios/Models ios/Data
           cd ios
           xcodegen generate
           pod install
