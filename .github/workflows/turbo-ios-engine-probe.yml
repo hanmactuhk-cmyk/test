@@ -76,12 +76,14 @@ jobs:
             -DCMAKE_FIND_ROOT_PATH_MODE_INCLUDE=NEVER \
             -DCMAKE_FIND_ROOT_PATH_MODE_LIBRARY=NEVER \
             -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_XCODE_ATTRIBUTE_CODE_SIGNING_ALLOWED=NO \
+            -DCMAKE_XCODE_ATTRIBUTE_CODE_SIGN_IDENTITY="" \
             -DVIENEU_NATIVE_BACKEND=cpu \
             -DVIENEU_PORTABLE_CPU=ON \
             -DONNXRUNTIME_ROOT="$(pwd)/ort-ios" \
             -DBUILD_TESTING=OFF
           cmake --build cpp/build-ios --config Release \
-            --target vieneu-tts-core --parallel 4
+            --target vieneu-tts-core --parallel 4 -- CODE_SIGNING_ALLOWED=NO
           test -s cpp/build-ios/Release/libvieneu-tts-core.a
           file cpp/build-ios/Release/libvieneu-tts-core.a
       - name: Inspect model availability and sizes
