@@ -1,0 +1,47 @@
+name: Turbo iOS bridge inspection
+on:
+  push:
+    branches: [voice-hn-studio-turbo-ios]
+    paths: [".github/workflows/turbo-ios-inspect.yml"]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Expand Voice Hn Studio iOS Swift source and patches
+        run: |
+          set -eu
+          python3 - <<'PY'
+          from pathlib import Path
+          import base64,tarfile,io,lzma
+          root=Path('ios')
+          root.mkdir(exist_ok=True)
+          data=lzma.decompress(Path('voice-hn-studio/v1/source.tar.xz').read_bytes())
+          with tarfile.open(fileobj=io.BytesIO(data),mode='r:') as ar: ar.extractall(root,filter='data')
+          parts=''.join((Path('voice-hn-studio/v1.1')/f'patch{i}.txt').read_text().strip() for i in range(4))
+          with tarfile.open(fileobj=io.BytesIO(lzma.decompress(base64.b64decode(parts))),mode='r:') as ar: ar.extractall(root,filter='data')
+          PY
+          python3 voice-hn-studio/v1.2/fix_import.py ios
+          python3 voice-hn-studio/v1.3/preview.py ios
+          python3 voice-hn-studio/v1.4/fix_picker.py ios
+      - name: Read Swift app routing and audio implementation
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          root=Path("ios")
+          for filename in ["project.yml","Podfile","scripts/setup_mac.sh","HNVieNeuIOS/Sources/HNVieNeuApp.swift","HNVieNeuIOS/Sources/SpeechStudio.swift","HNVieNeuIOS/Sources/AudioUtils.swift"]:
+              p=root/filename
+              print("\n=====BEGIN FILE",filename,"====")
+              if not p.exists(): print("NOT FOUND"); continue
+              s=p.read_text().splitlines()
+              print("lines",len(s))
+              for i,line in enumerate(s):
+                  print(f"{i+1:04d} {line}")
+              print("=====END FILE",filename,"====\n")
+          for p in (root/"HNVieNeuIOS/Sources").glob("*.swift"):
+              if p.name not in ["HNVieNeuApp.swift","SpeechStudio.swift","AudioUtils.swift"]:
+                  print("OTHER SWIFT:",p,len(p.read_text().splitlines()))
+          PY
