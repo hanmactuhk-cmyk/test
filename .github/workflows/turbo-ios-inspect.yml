@@ -27,6 +27,11 @@ jobs:
           python3 voice-hn-studio/v1.2/fix_import.py ios
           python3 voice-hn-studio/v1.3/preview.py ios
           python3 voice-hn-studio/v1.4/fix_picker.py ios
+      - name: Verify Turbo replacement script
+        run: |
+          python3 voice-hn-studio/turbo/make_turbo_app.py ios
+          grep -q 'TurboVoiceEngine.synthesize' ios/HNVieNeuIOS/Sources/SpeechStudio.swift
+          grep -q 'TurboModels' ios/project.yml
       - name: Read Swift app routing and audio implementation
         run: |
           python3 - <<'PY'
