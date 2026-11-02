@@ -25,6 +25,8 @@ cmake -S cpp -B cpp/build-ios -G Xcode \
   -DVIENEU_NATIVE_BACKEND=cpu \
   -DVIENEU_PORTABLE_CPU=ON \
   -DGGML_BLAS=ON \
+  -DBUILD_SHARED_LIBS=OFF \
+  -DGGML_BACKEND_DL=OFF \
   -DONNXRUNTIME_ROOT="$(pwd)/ort-ios" \
   -DBUILD_TESTING=OFF
 cmake --build cpp/build-ios --config Release --target hn-turbo --parallel 4 -- CODE_SIGNING_ALLOWED=NO
