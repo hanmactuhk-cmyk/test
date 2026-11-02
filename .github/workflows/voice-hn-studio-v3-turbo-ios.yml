@@ -1,0 +1,105 @@
+name: Voice Hn Studio v3 Turbo - unsigned iPhone IPA
+on:
+  push:
+    branches: [voice-hn-studio-turbo-ios]
+    paths: [".github/workflows/voice-hn-studio-v3-turbo-ios.yml"]
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  iphone:
+    runs-on: macos-15
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - name: Expand original app and all fixes
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import io,tarfile,lzma,base64
+          from pathlib import Path
+          root=Path("ios");root.mkdir(exist_ok=True)
+          data=lzma.decompress(Path("voice-hn-studio/v1/source.tar.xz").read_bytes())
+          with tarfile.open(fileobj=io.BytesIO(data),mode="r:") as tar:
+              tar.extractall(root,filter="data")
+          parts="".join((Path("voice-hn-studio/v1.1")/f"patch{i}.txt").read_text().strip() for i in range(4))
+          with tarfile.open(fileobj=io.BytesIO(lzma.decompress(base64.b64decode(parts))),mode="r:") as tar:
+              tar.extractall(root,filter="data")
+          p=root/"HNVieNeuIOS/Support/Info.plist"
+          old=p.read_text()
+          assert "<string>1.0.0</string>" in old
+          p.write_text(old.replace("<string>1.0.0</string>","<string>1.1.0</string>").replace("<string>2</string>","<string>3</string>"))
+          PY
+          python3 voice-hn-studio/v1.2/fix_import.py ios
+          python3 voice-hn-studio/v1.3/preview.py ios
+          python3 voice-hn-studio/v1.4/fix_picker.py ios
+      - name: Build original iOS native phonemizer and ONNX project
+        run: |
+          set -euo pipefail
+          brew install xcodegen cocoapods cmake
+          if ! command -v rustup >/dev/null 2>&1; then
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+          fi
+          export PATH="$HOME/.cargo/bin:$PATH"
+          cd ios
+          bash scripts/setup_mac.sh
+          source .venv/bin/activate
+          python -m pip install "onnx>=1.18,<1.21" "pillow>=10,<12" "huggingface_hub>=0.30,<2" "hf_xet>=1.1"
+          python scripts/patch_runtime.py
+      - name: Bundle real Turbo INT8 and 48 kHz codec, not Nano
+        run: |
+          set -euo pipefail
+          source ios/.venv/bin/activate
+          python voice-hn-studio/turbo/download_models.py
+      - name: Compile native Turbo C++ and integrate into app
+        run: |
+          set -euo pipefail
+          bash voice-hn-studio/turbo/build_native.sh
+      - name: Build unsigned iPhone application using Xcode
+        run: |
+          set -euo pipefail
+          cd ios
+          xcodegen generate
+          pod install
+          xcodebuild -workspace HNVieNeuIOS.xcworkspace \
+            -scheme HNVieNeuIOS -configuration Release -sdk iphoneos \
+            -destination 'generic/platform=iOS' -derivedDataPath DerivedData \
+            CODE_SIGNING_ALLOWED=NO build
+      - name: Validate real Turbo app and package iPhone IPA
+        run: |
+          set -euo pipefail
+          APP=ios/DerivedData/Build/Products/Release-iphoneos/HNVieNeuIOS.app
+          test -s "$APP/HNVieNeuIOS"
+          test -s "$APP/TurboModels/onnx/vieneu_backbone_shared.data"
+          test -s "$APP/TurboModels/onnx/vieneu_v3_heads.npz"
+          test -s "$APP/TurboModels/codec/moss_audio_tokenizer_decode_shared.data"
+          test -s "$APP/TurboModels/codec/moss_audio_tokenizer_encode.data"
+          test -s "$APP/TurboModels/voices_v3_turbo.json"
+          test ! -f "$APP/Models/text_encoder.onnx"
+          mkdir -p ios/dist/Payload
+          ditto "$APP" ios/dist/Payload/HNVieNeuIOS.app
+          (cd ios/dist && zip -qr -y Voice-Hn-Studio-v3-Turbo-UNSIGNED.ipa Payload)
+          unzip -t ios/dist/Voice-Hn-Studio-v3-Turbo-UNSIGNED.ipa >/dev/null
+          du -h ios/dist/Voice-Hn-Studio-v3-Turbo-UNSIGNED.ipa
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Voice-Hn-Studio-v3-Turbo-UNSIGNED
+          path: ios/dist/Voice-Hn-Studio-v3-Turbo-UNSIGNED.ipa
+          retention-days: 30
+          if-no-files-found: error
+      - name: Publish unsigned V3 Turbo beta IPA for iPhone Safari download
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          TAG=voice-hn-studio-v3-turbo-beta
+          IPA=ios/dist/Voice-Hn-Studio-v3-Turbo-UNSIGNED.ipa
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$TAG" "$IPA" --repo "$GITHUB_REPOSITORY" --clobber
+          else
+            gh release create "$TAG" "$IPA" --repo "$GITHUB_REPOSITORY" \
+              --target "$GITHUB_SHA" \
+              --title "Voice Hn Studio - Genuine V3 Turbo INT8 for iOS (Beta)" \
+              --notes "Real V3 Turbo INT8 ONNX/MOSS offline iOS build, 48 kHz. No Nano weights included. User-authorized reference cloning via WAV. iPhone runtime inference NOT VERIFIED; this is a test build. Sign IPA with your own certificate." \
+              --prerelease
+          fi
