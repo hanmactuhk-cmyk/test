@@ -54,7 +54,7 @@ a=audio.read_text()
 a=replace_once(a,"static let sampleRate = 24_000","static let sampleRate = 48_000","48k WAV writer")
 audio.write_text(a)
 ap=app.read_text()
-ap=replace_once(ap,"Voice Hn Studio · Phiên bản 1.4","Voice Hn Studio · Phiên bản Turbo 1.5","app version")
+ap=replace_once(ap,"Voice Hn Studio · Phiên bản 1.4","Voice Hn Studio · Phiên bản 1.5","app version")
 app.write_text(ap)
 
 b=bridge.read_text()
