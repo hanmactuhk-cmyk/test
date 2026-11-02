@@ -1,4 +1,5 @@
 name: Voice Hn Studio v3 Turbo - unsigned iPhone IPA
+# Build native llama.cpp / ggml as static libraries to link into the app.
 on:
   push:
     branches: [voice-hn-studio-turbo-ios]
