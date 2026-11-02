@@ -33,21 +33,33 @@ jobs:
           python3 voice-hn-studio/v1.2/fix_import.py ios
           python3 voice-hn-studio/v1.3/preview.py ios
           python3 voice-hn-studio/v1.4/fix_picker.py ios
-      - name: Build original iOS native phonemizer and ONNX project
+      - name: Prepare genuine Turbo-only iOS SDK without downloading Nano
         run: |
           set -euo pipefail
           brew install xcodegen cmake
           command -v pod
-          pod --version
           if ! command -v rustup >/dev/null 2>&1; then
             curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
           fi
           export PATH="$HOME/.cargo/bin:$PATH"
           cd ios
-          bash scripts/setup_mac.sh
+          python3 -m venv .venv
           source .venv/bin/activate
-          python -m pip install "onnx>=1.18,<1.21" "pillow>=10,<12" "huggingface_hub>=0.30,<2" "hf_xet>=1.1"
-          python scripts/patch_runtime.py
+          python -m pip install --upgrade pip numpy pillow "huggingface_hub>=0.30,<2" "hf_xet>=1.1"
+          mkdir -p Models Data
+          python -c 'import scripts.prepare_assets as p; p.extract_dictionary()'
+          bash scripts/build_seag2p_ios.sh
+          python - <<'PY'
+          from PIL import Image
+          from pathlib import Path
+          src=Path("../voice-hn-studio/v1/brand.webp")
+          dst=Path("HNVieNeuIOS/Support/Assets.xcassets")
+          img=Image.open(src).convert("RGB")
+          img.resize((1024,1024),Image.Resampling.LANCZOS).save(dst/"AppIcon.appiconset/Icon-1024.png",optimize=True)
+          img.resize((256,256),Image.Resampling.LANCZOS).save(dst/"BrandMark.imageset/mark.png",optimize=True)
+          PY
+          xcodegen generate
+          pod install
       - name: Bundle real Turbo INT8 and 48 kHz codec, not Nano
         run: |
           set -euo pipefail
