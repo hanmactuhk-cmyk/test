@@ -37,7 +37,7 @@ jobs:
           python3 - <<'PY'
           from pathlib import Path
           root=Path("ios")
-          for filename in ["project.yml","Podfile","scripts/setup_mac.sh","scripts/prepare_assets.py","scripts/build_seag2p_ios.sh","HNVieNeuIOS/Sources/HNVieNeuApp.swift","HNVieNeuIOS/Sources/SpeechStudio.swift","HNVieNeuIOS/Sources/AudioUtils.swift","HNVieNeuIOS/Sources/CloneVoiceStore.swift","HNVieNeuIOS/Sources/TTSModels.swift","HNVieNeuIOS/Sources/CloneEngine.swift","HNVieNeuIOS/Support/HNVieNeu-Bridging-Header.h"]:
+          for filename in ["project.yml","Podfile","scripts/setup_mac.sh","scripts/prepare_assets.py","scripts/build_seag2p_ios.sh","scripts/patch_runtime.py","HNVieNeuIOS/Sources/HNVieNeuApp.swift","HNVieNeuIOS/Sources/SpeechStudio.swift","HNVieNeuIOS/Sources/AudioUtils.swift","HNVieNeuIOS/Sources/CloneVoiceStore.swift","HNVieNeuIOS/Sources/TTSModels.swift","HNVieNeuIOS/Sources/CloneEngine.swift","HNVieNeuIOS/Support/HNVieNeu-Bridging-Header.h"]:
               p=root/filename
               print("\n=====BEGIN FILE",filename,"====")
               if not p.exists(): print("NOT FOUND"); continue
